@@ -138,13 +138,53 @@ static void probe_pages(CPURISCVState *env, target_ulong addr,
     }
 }
 
-static inline void vext_set_elem_mask(void *v0, int index,
+static inline void vext_set_elem_mask(void *v0, uint32_t index,
                                       uint8_t value)
 {
-    int idx = index / 64;
-    int pos = index % 64;
+    uint32_t idx = index / 64;
+    uint32_t pos = index % 64;
     uint64_t old = ((uint64_t *)v0)[idx];
     ((uint64_t *)v0)[idx] = deposit64(old, pos, 1, value);
+}
+
+/* update data[idx >> 6] to value by mask */
+static inline void masked_set64(uint64_t *data, uint32_t idx,
+                              uint64_t mask, uint8_t value) {
+    if (value) {
+        data[idx>>6] |=  mask;
+    } else {
+        data[idx>>6] &= ~mask;
+    }
+}
+
+#define BIT_MASK64(nr) ((uint64_t)1 << ((nr) % 64))
+
+/* set mask vector bits [s,e) to value */
+static inline void vext_set_range_mask(void *v0, uint32_t s,
+                                      uint32_t e, uint8_t value)
+{
+    uint32_t i0, i1;
+    uint64_t *data = (uint64_t *) v0;
+    
+    if (s >> 6 == e >> 6) {
+        masked_set64(data, s, BIT_MASK64(e) - BIT_MASK64(s), value);
+    } else {
+        masked_set64(data, s, ~(BIT_MASK64(s) - 1), value);
+        masked_set64(data, e, BIT_MASK64(e) - 1, value);
+        
+        i0 = (s >> 6) + 1;
+        i1 = e >> 6;
+        memset(data + i0, -value, (i1-i0) * 8);
+    }
+}
+
+/* set mask vector bits [s,e) to 1 */
+static inline void vext_set_ta_mask(bool vta_all_1s, void *v0,
+                                    uint32_t s, uint32_t e)
+{
+    if (vta_all_1s) {
+        vext_set_range_mask(v0, s, e, 1);
+    }
 }
 
 /* elements operations for load and store */
@@ -1176,11 +1216,7 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,   \
      * mask destination register are always tail-agnostic
      * set tail elements to 1s
      */                                                       \
-    if (vta_all_1s) {                                         \
-        for (; i < total_elems; i++) {                        \
-            vext_set_elem_mask(vd, i, 1);                     \
-        }                                                     \
-    }                                                         \
+    vext_set_ta_mask(vta_all_1s, vd, i, total_elems);         \
 }
 
 GEN_VEXT_VMADC_VVM(vmadc_vvm_b, uint8_t,  H1, DO_MADC)
@@ -1216,11 +1252,7 @@ void HELPER(NAME)(void *vd, void *v0, target_ulong s1,          \
      * mask destination register are always tail-agnostic
      * set tail elements to 1s
      */                                                         \
-    if (vta_all_1s) {                                           \
-        for (; i < total_elems; i++) {                          \
-            vext_set_elem_mask(vd, i, 1);                       \
-        }                                                       \
-    }                                                           \
+    vext_set_ta_mask(vta_all_1s, vd, i, total_elems);           \
 }
 
 GEN_VEXT_VMADC_VXM(vmadc_vxm_b, uint8_t,  H1, DO_MADC)
@@ -1433,11 +1465,7 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,   \
      * mask destination register are always tail-agnostic
      * set tail elements to 1s
      */                                                       \
-    if (vta_all_1s) {                                         \
-        for (; i < total_elems; i++) {                        \
-            vext_set_elem_mask(vd, i, 1);                     \
-        }                                                     \
-    }                                                         \
+    vext_set_ta_mask(vta_all_1s, vd, i, total_elems);         \
 }
 
 GEN_VEXT_CMP_VV(vmseq_vv_b, uint8_t,  H1, DO_MSEQ)
@@ -1500,11 +1528,7 @@ void HELPER(NAME)(void *vd, void *v0, target_ulong s1, void *vs2,   \
      * mask destination register are always tail-agnostic
      * set tail elements to 1s
      */                                                             \
-    if (vta_all_1s) {                                               \
-        for (; i < total_elems; i++) {                              \
-            vext_set_elem_mask(vd, i, 1);                           \
-        }                                                           \
-    }                                                               \
+    vext_set_ta_mask(vta_all_1s, vd, i, total_elems);               \
 }
 
 GEN_VEXT_CMP_VX(vmseq_vx_b, uint8_t,  H1, DO_MSEQ)
@@ -4256,11 +4280,7 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,   \
      * mask destination register are always tail-agnostic
      * set tail elements to 1s
      */                                                       \
-    if (vta_all_1s) {                                         \
-        for (; i < total_elems; i++) {                        \
-            vext_set_elem_mask(vd, i, 1);                     \
-        }                                                     \
-    }                                                         \
+    vext_set_ta_mask(vta_all_1s, vd, i, total_elems);         \
 }
 
 GEN_VEXT_CMP_VV_ENV(vmfeq_vv_h, uint16_t, H2, float16_eq_quiet)
@@ -4297,11 +4317,7 @@ void HELPER(NAME)(void *vd, void *v0, uint64_t s1, void *vs2,       \
      * mask destination register are always tail-agnostic
      * set tail elements to 1s
      */                                                             \
-    if (vta_all_1s) {                                               \
-        for (; i < total_elems; i++) {                              \
-            vext_set_elem_mask(vd, i, 1);                           \
-        }                                                           \
-    }                                                               \
+    vext_set_ta_mask(vta_all_1s, vd, i, total_elems);               \
 }
 
 GEN_VEXT_CMP_VF(vmfeq_vf_h, uint16_t, H2, float16_eq_quiet)
@@ -4811,11 +4827,7 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1,          \
      * mask destination register are always tail-agnostic
      * set tail elements to 1s
      */                                                   \
-    if (vta_all_1s) {                                     \
-        for (; i < total_elems; i++) {                    \
-            vext_set_elem_mask(vd, i, 1);                 \
-        }                                                 \
-    }                                                     \
+    vext_set_ta_mask(vta_all_1s, vd, i, total_elems);     \
 }
 
 #define DO_NAND(N, M)  (!(N & M))
@@ -4922,11 +4934,7 @@ static void vmsetm(void *vd, void *v0, void *vs2, CPURISCVState *env,
      * mask destination register are always tail-agnostic
      * set tail elements to 1s
      */
-    if (vta_all_1s) {
-        for (; i < total_elems; i++) {
-            vext_set_elem_mask(vd, i, 1);
-        }
-    }
+    vext_set_ta_mask(vta_all_1s, vd, i, total_elems);
 }
 
 void HELPER(vmsbf_m)(void *vd, void *v0, void *vs2, CPURISCVState *env,
