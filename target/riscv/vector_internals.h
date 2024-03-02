@@ -98,10 +98,10 @@ static inline uint32_t vext_vta_all_1s(uint32_t desc)
  * per mask value (MLEN). In the 0.9 design, MLEN=1.
  * (Section 4.5)
  */
-static inline int vext_elem_mask(void *v0, int index)
+static inline int vext_elem_mask(void *v0, uint32_t index)
 {
-    int idx = index / 64;
-    int pos = index  % 64;
+    uint32_t idx = index / 64;
+    uint32_t pos = index % 64;
     return (((uint64_t *)v0)[idx] >> pos) & 1;
 }
 
