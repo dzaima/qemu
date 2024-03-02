@@ -4812,15 +4812,26 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1,          \
     uint32_t vl = env->vl;                                \
     uint32_t total_elems = riscv_cpu_cfg(env)->vlenb << 3;\
     uint32_t vta_all_1s = vext_vta_all_1s(desc);          \
-    uint32_t i;                                           \
-    int a, b;                                             \
+    uint32_t a, b;                                        \
+    uint32_t i = env->vstart;                             \
                                                           \
     VSTART_CHECK_EARLY_EXIT(env);                         \
                                                           \
-    for (i = env->vstart; i < vl; i++) {                  \
+    if (i == 0) {                                         \
+        /*
+         * do bulk of work in bytes
+         * not uint64_t to reduce tail loop usage
+         */                                               \
+        for (; i+8 < vl; i += 8) {                        \
+            a = ((uint8_t *) vs1)[i / 8];                 \
+            b = ((uint8_t *) vs2)[i / 8];                 \
+            ((uint8_t *) vd)[i / 8] = OP(b, a);           \
+        }                                                 \
+    }                                                     \
+    for (; i < vl; i++) {                                 \
         a = vext_elem_mask(vs1, i);                       \
         b = vext_elem_mask(vs2, i);                       \
-        vext_set_elem_mask(vd, i, OP(b, a));              \
+        vext_set_elem_mask(vd, i, 1 & OP(b, a));          \
     }                                                     \
     env->vstart = 0;                                      \
     /*
@@ -4830,11 +4841,11 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1,          \
     vext_set_ta_mask(vta_all_1s, vd, i, total_elems);     \
 }
 
-#define DO_NAND(N, M)  (!(N & M))
-#define DO_ANDNOT(N, M)  (N & !M)
-#define DO_NOR(N, M)  (!(N | M))
-#define DO_ORNOT(N, M)  (N | !M)
-#define DO_XNOR(N, M)  (!(N ^ M))
+#define DO_NAND(N, M)  (~(N & M))
+#define DO_ANDNOT(N, M)  (N & ~M)
+#define DO_NOR(N, M)  (~(N | M))
+#define DO_ORNOT(N, M)  (N | ~M)
+#define DO_XNOR(N, M)  (~(N ^ M))
 
 GEN_VEXT_MASK_VV(vmand_mm, DO_AND)
 GEN_VEXT_MASK_VV(vmnand_mm, DO_NAND)
